@@ -10,11 +10,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout GitHub repo
-        uses: actions/checkout@v3
-      
-      - name: Sync to Hugging Face
-        uses: huggingface/hub-sync@v1
+        uses: actions/checkout@v4
         with:
-          hf-token: ${{ secrets.HF_TOKEN }}
-          repository: componavt/differ-hug
-          space-name: differ-hug
+          fetch-depth: 0  # Важно для полной истории
+      
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+      
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # Добавляем HF Space как remote (если ещё не добавлен)
+          git remote add hf https://huggingface.co/spaces/componavt/differ-hug || true
+          # Пушим код в HF через токен
+          git push https://componavt:${HF_TOKEN}@huggingface.co/spaces/componavt/differ-hug main --force
