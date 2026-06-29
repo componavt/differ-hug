@@ -8,5 +8,3 @@ demo = gr.Interface(
     inputs=["text", gr.Slider(value=1, minimum=1, maximum=10, step=1)],
     outputs="text",
 )
-
-demo.launch()
