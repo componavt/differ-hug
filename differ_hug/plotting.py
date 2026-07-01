@@ -36,23 +36,32 @@ def make_phase_portrait_figure(
     Returns:
         matplotlib Figure object
     """
+    selected_indices = [int(i) for i in selected_indices] if selected_indices else []
+    
+    if not selected_indices:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, "No trajectories selected", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return fig
+    
     fig, ax = plt.subplots(figsize=(8, 6))
     styles = ['-', '--', '-.', ':']
     colors = plt.cm.tab20.colors
     
-    for m, solution_data in enumerate(solutions):
-        if m not in selected_indices:
+    for solution_data in solutions:
+        traj_idx = solution_data["idx"]
+        if traj_idx not in selected_indices:
             continue
-        color = colors[m % len(colors)]
+        color = colors[traj_idx % len(colors)]
         
         x_dop = solution_data["x"]
         y_dop = solution_data["y"]
         ax.plot(x_dop, y_dop, linestyle='-', color=color, linewidth=1.2,
-                label=f'DOP853 traj {m}' if m == selected_indices[0] else "")
+                label=f'DOP853 traj {traj_idx}' if traj_idx == selected_indices[0] else "")
         
         ax.plot(x_dop[0], y_dop[0], 'o', color=color, markersize=4)
         ax.plot(x_dop[-1], y_dop[-1], 'x', color=color, markersize=6)
-        ax.text(x_dop[-1] + 0.01, y_dop[-1] + 0.01, f"{m}", fontsize=8, color=color)
+        ax.text(x_dop[-1] + 0.01, y_dop[-1] + 0.01, f"{traj_idx}", fontsize=8, color=color)
         
         if "x_nn" in solution_data and solution_data["x_nn"] is not None:
             x_nn = solution_data["x_nn"]
@@ -60,7 +69,7 @@ def make_phase_portrait_figure(
             t_full = solution_data["t_full"]
             
             ax.plot(x_nn, y_nn, linestyle='--', color=color, linewidth=1.0, alpha=0.7,
-                    label=f'NN traj {m}' if m == selected_indices[0] else "")
+                    label=f'NN traj {traj_idx}' if traj_idx == selected_indices[0] else "")
             
             ax.plot(x_dop[0], y_dop[0], '^', color=color, markersize=8, markeredgecolor='black')
             
@@ -79,11 +88,11 @@ def make_phase_portrait_figure(
                     ax.plot([x_dop[i], x_nn[i]], [y_dop[i], y_nn[i]],
                            color=color, linewidth=0.5, alpha=0.3, linestyle='-')
         
-        ax.text(x_dop[-1] + 0.01, y_dop[-1] + 0.01, f"{m}", fontsize=8, color=color)
+        ax.text(x_dop[-1] + 0.01, y_dop[-1] + 0.01, f"{traj_idx}", fontsize=8, color=color)
         if "x_nn" in solution_data and solution_data["x_nn"] is not None:
             if solution_data["x_nn"] is not None:
                 ax.text(solution_data["x_nn"][-1] + 0.01, solution_data["y_nn"][-1] + 0.01,
-                        f"{m}", fontsize=8, color=color)
+                        f"{traj_idx}", fontsize=8, color=color)
     
     ax.set_title(f"Gene regulatory trajectories ({solver_type}) "
                  f"— t_train_end={t_train_end:.2f}, t_full_end={t_full_end:.2f}, t_points={t_number}")
@@ -126,22 +135,31 @@ def make_time_series_figure(
     Returns:
         matplotlib Figure object
     """
+    selected_indices = [int(i) for i in selected_indices] if selected_indices else []
+    
+    if not selected_indices:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, "No trajectories selected", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return fig
+    
     fig, ax_ts = plt.subplots(figsize=(8, 6))
     colors = plt.cm.tab20.colors
     
-    for m, solution_data in enumerate(solutions):
-        if m not in selected_indices:
+    for solution_data in solutions:
+        traj_idx = solution_data["idx"]
+        if traj_idx not in selected_indices:
             continue
-        color = colors[m % len(colors)]
+        color = colors[traj_idx % len(colors)]
         
         t_full = solution_data["t_full"]
         x_dop = solution_data["x"]
         y_dop = solution_data["y"]
         
         ax_ts.plot(t_full, x_dop, linestyle='-', color=color, linewidth=1.2,
-                   label=f'x(t) traj {m}' if m == selected_indices[0] else "")
+                   label=f'x(t) traj {traj_idx}' if traj_idx == selected_indices[0] else "")
         ax_ts.plot(t_full, y_dop, linestyle='--', color=color, linewidth=1.2,
-                   label=f'y(t) traj {m}' if m == selected_indices[0] else "")
+                   label=f'y(t) traj {traj_idx}' if traj_idx == selected_indices[0] else "")
     
     ax_ts.set_title(f"Time series ({solver_type}) — x(t) and y(t) — "
                     f"t_train_end={t_train_end:.2f}, t_full_end={t_full_end:.2f}, t_points={t_number}")
@@ -161,6 +179,7 @@ def make_shadowing_figure(
     t_full_end: float = 3.0,
     t_number: int = 100,
     epsilon_threshold: float = 1e-3,
+    rhs_func=None,
 ) -> Optional[plt.Figure]:
     """
     Create shadowing figure showing epsilon(t) vs time.
@@ -173,21 +192,28 @@ def make_shadowing_figure(
         t_full_end: Full integration end time
         t_number: Number of time points
         epsilon_threshold: Threshold for shadowing breakdown
+        rhs_func: Right-hand side function for ODE system (for correct shadowing)
         
     Returns:
         matplotlib Figure object or None if no shadowing data available
     """
+    selected_indices = [int(i) for i in selected_indices] if selected_indices else []
+    
     if not selected_indices:
-        return None
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.text(0.5, 0.5, "No trajectories selected", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return fig
     
     fig, ax_shad = plt.subplots(figsize=(8, 6))
     colors = plt.cm.tab20.colors
     
     annotated = False
-    for m, solution_data in enumerate(solutions):
-        if m not in selected_indices:
+    for solution_data in solutions:
+        traj_idx = solution_data["idx"]
+        if traj_idx not in selected_indices:
             continue
-        color = colors[m % len(colors)]
+        color = colors[traj_idx % len(colors)]
         
         t_full = solution_data["t_full"]
         x_dop = solution_data["x"]
@@ -195,37 +221,66 @@ def make_shadowing_figure(
         
         eps = 1e-6 * (1.0 + abs(x_dop[0]) + abs(y_dop[0]))
         xp0, yp0 = x_dop[0] + eps, y_dop[0] + 0.5 * eps
-        try:
-            from scipy.integrate import solve_ivp
-            sol_p = solve_ivp(
-                lambda t, s: [0, 0], 
-                (t_full[0], t_full[-1]), 
-                (xp0, yp0), 
-                method='DOP853', 
-                t_eval=t_full
-            )
-            if sol_p.success:
-                xp, yp = sol_p.y
-                dist = np.sqrt((x_dop - xp)**2 + (y_dop - yp)**2)
-                epsilon_t = np.maximum.accumulate(dist)
-                
-                ax_shad.plot(epsilon_t, t_full, color=color, linewidth=1.2,
-                            label=f'ε(t) traj {m}' if m == selected_indices[0] else "")
-                
-                exceed_indices = np.where(epsilon_t > epsilon_threshold)[0]
-                if len(exceed_indices) > 0:
-                    first_exceed_idx = exceed_indices[0]
-                    shadowing_time = t_full[first_exceed_idx]
-                    ax_shad.axhline(y=shadowing_time, color=color, linestyle=':', alpha=0.7,
-                                   label=f't*={shadowing_time:.2f}' if not annotated else "")
-                    annotated = True
-        except Exception:
-            pass
+        
+        if rhs_func is not None:
+            try:
+                sol_p = solve_ivp(
+                    rhs_func,
+                    (t_full[0], t_full[-1]),
+                    (xp0, yp0),
+                    method='DOP853',
+                    t_eval=t_full
+                )
+                if sol_p.success:
+                    xp, yp = sol_p.y
+                    dist = np.sqrt((x_dop - xp)**2 + (y_dop - yp)**2)
+                    epsilon_t = np.maximum.accumulate(dist)
+                    
+                    ax_shad.plot(epsilon_t, t_full, color=color, linewidth=1.2,
+                                label=f'ε(t) traj {traj_idx}' if traj_idx == selected_indices[0] else "")
+                    
+                    exceed_indices = np.where(epsilon_t > epsilon_threshold)[0]
+                    if len(exceed_indices) > 0:
+                        first_exceed_idx = exceed_indices[0]
+                        shadowing_time = t_full[first_exceed_idx]
+                        ax_shad.axhline(y=shadowing_time, color=color, linestyle=':', alpha=0.7,
+                                        label=f't*={shadowing_time:.2f}' if not annotated else "")
+                        annotated = True
+            except Exception:
+                pass
+        else:
+            xp0, yp0 = x_dop[0] + eps, y_dop[0] + 0.5 * eps
+            try:
+                from scipy.integrate import solve_ivp
+                sol_p = solve_ivp(
+                    lambda t, s: [0, 0], 
+                    (t_full[0], t_full[-1]), 
+                    (xp0, yp0), 
+                    method='DOP853', 
+                    t_eval=t_full
+                )
+                if sol_p.success:
+                    xp, yp = sol_p.y
+                    dist = np.sqrt((x_dop - xp)**2 + (y_dop - yp)**2)
+                    epsilon_t = np.maximum.accumulate(dist)
+                    
+                    ax_shad.plot(epsilon_t, t_full, color=color, linewidth=1.2,
+                                label=f'ε(t) traj {traj_idx}' if traj_idx == selected_indices[0] else "")
+                    
+                    exceed_indices = np.where(epsilon_t > epsilon_threshold)[0]
+                    if len(exceed_indices) > 0:
+                        first_exceed_idx = exceed_indices[0]
+                        shadowing_time = t_full[first_exceed_idx]
+                        ax_shad.axhline(y=shadowing_time, color=color, linestyle=':', alpha=0.7,
+                                        label=f't*={shadowing_time:.2f}' if not annotated else "")
+                        annotated = True
+            except Exception:
+                pass
     
     ax_shad.axhline(y=t_train_end, color='red', linestyle='--', alpha=0.7,
                    label=f't_train_end={t_train_end}')
     
-    ax_shad.set_title(f"Shadowing ({solver_type}) — ε(t) vs t — "
+    ax_shad.set_title(f"Shadowing analysis ({solver_type}) — ε(t) vs t — Perturbed trajectory vs primary trajectory — "
                       f"t_train_end={t_train_end:.2f}, t_full_end={t_full_end:.2f}, t_points={t_number}")
     ax_shad.set_xlabel("ε(t)")
     ax_shad.set_ylabel("t")
@@ -237,7 +292,7 @@ def make_shadowing_figure(
         from matplotlib.lines import Line2D
         legend_elements = [
             Line2D([0], [0], color='gray', lw=2, linestyle='-', label='ε(t)'),
-            Line2D([0], [0], color='red', lw=1, linestyle='--', label=f'train/extrap boundary')
+            Line2D([0], [0], color='red', lw=1, linestyle='--', label='train/extrap boundary')
         ]
         ax_shad.legend(handles=legend_elements)
     

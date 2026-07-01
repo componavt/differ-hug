@@ -530,6 +530,7 @@ def compute_anomaly_score(df) -> np.ndarray:
 
 def compute_shadowing_diagnostics(
     solutions: List[Dict],
+    rhs_func,
     epsilon_threshold: float = 1e-3
 ) -> Dict[str, Any]:
     """
@@ -537,6 +538,7 @@ def compute_shadowing_diagnostics(
     
     Args:
         solutions: List of solution dictionaries (each with 'x', 'y', 't_full')
+        rhs_func: Right-hand side function for the ODE system
         epsilon_threshold: Threshold for shadowing breakdown
         
     Returns:
@@ -544,20 +546,20 @@ def compute_shadowing_diagnostics(
     """
     epsilon_t_list = []
     shadowing_times = []
-    
+
     for sol in solutions:
         x = sol['x']
         y = sol['y']
         t_full = sol['t_full']
-        
+
         eps = 1e-6 * (1.0 + abs(x[0]) + abs(y[0]))
         xp0, yp0 = x[0] + eps, y[0] + 0.5 * eps
         try:
             sol_p = solve_ivp(
-                lambda t, s: [0, 0], 
-                (t_full[0], t_full[-1]), 
-                (xp0, yp0), 
-                method='DOP853', 
+                rhs_func,
+                (t_full[0], t_full[-1]),
+                (xp0, yp0),
+                method='DOP853',
                 t_eval=t_full
             )
             if sol_p.success:
@@ -565,7 +567,7 @@ def compute_shadowing_diagnostics(
                 dist = np.sqrt((x - xp) ** 2 + (y - yp) ** 2)
                 epsilon_t = np.maximum.accumulate(dist)
                 epsilon_t_list.append(epsilon_t)
-                
+
                 exceed_indices = np.where(epsilon_t > epsilon_threshold)[0]
                 if len(exceed_indices) > 0:
                     first_exceed_idx = exceed_indices[0]
@@ -573,8 +575,8 @@ def compute_shadowing_diagnostics(
                 else:
                     shadowing_times.append(None)
         except Exception:
-            pass
-    
+            continue
+
     return {
         'epsilon_t_list': epsilon_t_list,
         'shadowing_times': shadowing_times,

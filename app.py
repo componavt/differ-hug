@@ -12,7 +12,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import io
 import sys
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 
 from differ_hug.compute import (
     build_angles,
@@ -28,7 +28,6 @@ from differ_hug.plotting import (
     make_phase_portrait_figure,
     make_time_series_figure,
     make_shadowing_figure,
-    make_metrics_table_figure,
 )
 from differ_hug.params import parameters_to_text, text_to_parameters
 from differ_hug.docs import documentation_markdown, system_latex, get_system_description
@@ -75,10 +74,20 @@ def run_simulation(
     show_connections: bool,
     connection_stride: int,
     selected_indices: list,
-) -> Tuple[Any, Any, Any, Any, str, str, str, str]:
+) -> Tuple[Any, Any, Any, Any, Any, str, str, str, Any]:
     """
     Run the ODE simulation and generate all outputs.
     """
+    error = validate_parameters(t_number, t_train_end, t_full_end, alpha, num_points)
+    if error:
+        return (
+            None, None, None, None, None,
+            f"ERROR: {error}",
+            DEFAULT_PARAMS_TEXT,
+            system_latex(),
+            gr.update(choices=[], value=[])
+        )
+    
     diagnostics = []
     diagnostics.append("Starting simulation...")
     
@@ -109,12 +118,11 @@ def run_simulation(
         if not solutions:
             diagnostics.append("  ERROR: No trajectories solved successfully")
             return (
-                None, None, None, None,
+                None, None, None, None, None,
                 "\n".join(diagnostics),
                 DEFAULT_PARAMS_TEXT,
                 system_latex(),
-                "ERROR: No trajectories solved successfully",
-                ""
+                gr.update(choices=[], value=[])
             )
         
         diagnostics.append("Step 5: Computing local z-score...")
@@ -126,8 +134,8 @@ def run_simulation(
         df_metrics = pd.DataFrame(metrics)
         df_metrics["anomaly_score"] = compute_anomaly_score(df_metrics)
         
-        diagnostics.append("Step 7: Sorting by anomaly score...")
-        df_metrics = df_metrics.sort_values(by="anomaly_score", ascending=False, na_position="last")
+        diagnostics.append("Step 7: Building trajectory choices...")
+        trajectory_update = build_trajectory_choices(df_metrics)
         
         diagnostics.append("Step 8: Creating figures...")
         
@@ -146,7 +154,7 @@ def run_simulation(
         if show_connections:
             shadowing_fig = make_shadowing_figure(
                 solutions, selected_indices, solver_type,
-                t_train_end, t_full_end, t_number
+                t_train_end, t_full_end, t_number, rhs_func
             )
         
         diagnostics.append("Step 9: Creating metrics table...")
@@ -160,10 +168,21 @@ def run_simulation(
             'curv_count_finite': 'curv_ct_fin'
         }
         df_to_display = df_to_display.rename(columns=column_rename_map)
-        metrics_html = df_to_display.style.format("{:.3f}")._repr_html_()
+        
+        df_rounded = df_metrics.round(3)
+        csv_path = "export_metrics_rounded.csv"
+        df_rounded.to_csv(csv_path, index=False, float_format="%.3f")
+        
+        metrics_table_value = df_to_display
         
         diagnostics.append("Step 10: Preparing outputs...")
-        params_text = parameters_to_text(locals())
+        params_text = parameters_to_text({
+            "t_number": t_number, "t_train_end": t_train_end, "t_full_end": t_full_end,
+            "alpha": alpha, "K": K, "b": b, "gamma1": gamma1, "gamma2": gamma2,
+            "initial_radius": initial_radius, "num_points": num_points,
+            "circle_start": circle_start, "circle_end": circle_end,
+            "center_x": center_x, "center_y": center_y, "solver_type": solver_type,
+        })
         
         status = f"Simulation completed. Solved {len(solutions)} trajectories."
         diagnostics.append(status)
@@ -174,24 +193,23 @@ def run_simulation(
             phase_fig,
             time_fig,
             shadowing_fig,
-            metrics_html,
+            metrics_table_value,
+            csv_path,
             diagnostics_text,
             params_text,
             system_latex(),
-            status,
-            ""
+            trajectory_update
         )
         
     except Exception as e:
         error_msg = f"ERROR: {str(e)}"
         diagnostics.append(error_msg)
         return (
-            None, None, None, None,
+            None, None, None, None, None,
             "\n".join(diagnostics),
             DEFAULT_PARAMS_TEXT,
             system_latex(),
-            error_msg,
-            ""
+            gr.update(choices=[], value=[])
         )
 
 
@@ -212,22 +230,26 @@ def apply_text_to_controls(
     center_x: float,
     center_y: float,
     solver_type: str,
-) -> dict:
+) -> Tuple:
     """
     Parse text parameters and update control values.
     """
     parsed = text_to_parameters(params_text)
     if not parsed:
-        return {
-            t_number: t_number, t_train_end: t_train_end, t_full_end: t_full_end,
-            alpha: alpha, K: K, b: b, gamma1: gamma1, gamma2: gamma2,
-            initial_radius: initial_radius, num_points: num_points,
-            circle_start: circle_start, circle_end: circle_end,
-            center_x: center_x, center_y: center_y, solver_type: solver_type,
-            params_text: DEFAULT_PARAMS_TEXT
-        }
-    
-    updates = {}
+        normalized_text = parameters_to_text({
+            "t_number": t_number, "t_train_end": t_train_end, "t_full_end": t_full_end,
+            "alpha": alpha, "K": K, "b": b, "gamma1": gamma1, "gamma2": gamma2,
+            "initial_radius": initial_radius, "num_points": num_points,
+            "circle_start": circle_start, "circle_end": circle_end,
+            "center_x": center_x, "center_y": center_y, "solver_type": solver_type,
+        })
+        selected_update = gr.update()
+        return (
+            t_number, t_train_end, t_full_end, alpha, K, b,
+            gamma1, gamma2, initial_radius, num_points,
+            circle_start, circle_end, center_x, center_y, solver_type,
+            normalized_text, selected_update
+        )
     
     int_keys = {"t_number", "num_points", "circle_start", "circle_end"}
     float_keys = {
@@ -235,36 +257,55 @@ def apply_text_to_controls(
         "gamma1", "gamma2", "initial_radius", "center_x", "center_y"
     }
     
+    result = {
+        "t_number": t_number, "t_train_end": t_train_end, "t_full_end": t_full_end,
+        "alpha": alpha, "K": K, "b": b, "gamma1": gamma1, "gamma2": gamma2,
+        "initial_radius": initial_radius, "num_points": num_points,
+        "circle_start": circle_start, "circle_end": circle_end,
+        "center_x": center_x, "center_y": center_y, "solver_type": solver_type,
+    }
+    
     for key, val in parsed.items():
         if key in int_keys:
             try:
-                updates[key] = int(val)
-            except Exception:
+                result[key] = int(val)
+            except (TypeError, ValueError):
                 pass
         elif key in float_keys:
             try:
-                updates[key] = float(val)
-            except Exception:
+                result[key] = float(val)
+            except (TypeError, ValueError):
                 pass
         elif key == "solver_type":
-            updates["solver_type"] = val
+            result["solver_type"] = val
         elif key == "circle_start_end":
             cs, ce = val
-            updates["circle_start"] = cs
-            updates["circle_end"] = ce
+            result["circle_start"] = cs
+            result["circle_end"] = ce
     
     if "circle_start" in parsed and "circle_end" in parsed:
         cs = int(parsed["circle_start"])
         ce = int(parsed["circle_end"])
-        updates["circle_start"] = cs
-        updates["circle_end"] = ce
+        result["circle_start"] = cs
+        result["circle_end"] = ce
     
+    selected_update = gr.update()
     if "num_points" in parsed:
-        updates["selected_indices"] = list(range(min(5, int(parsed["num_points"]))))
+        selected_update = gr.update(
+            choices=list(range(result["num_points"])),
+            value=list(range(min(5, result["num_points"])))
+        )
     
-    updates["params_text"] = parameters_to_text({**parsed, **updates})
+    normalized_text = parameters_to_text(result)
     
-    return updates
+    return (
+        result["t_number"], result["t_train_end"], result["t_full_end"],
+        result["alpha"], result["K"], result["b"], result["gamma1"], result["gamma2"],
+        result["initial_radius"], result["num_points"],
+        result["circle_start"], result["circle_end"],
+        result["center_x"], result["center_y"], result["solver_type"],
+        normalized_text, selected_update
+    )
 
 
 def read_controls_to_text(
@@ -307,10 +348,38 @@ def read_controls_to_text(
     return parameters_to_text(params)
 
 
-def update_selected_indices(num_points: int, solutions_len: int) -> list:
+def update_selected_indices(num_points: int) -> "gr.update":
     """Update selected indices based on num_points."""
-    n = min(num_points, 50)
-    return list(range(min(5, n)))
+    n = min(int(num_points), 50)
+    default_ids = list(range(min(5, n)))
+    return gr.update(choices=list(range(n)), value=default_ids)
+
+
+def validate_parameters(t_number, t_train_end, t_full_end, alpha, num_points) -> Optional[str]:
+    """Return an error message if parameters are invalid, otherwise None."""
+    if alpha <= 0:
+        return "alpha must be strictly positive."
+    if t_number < 10:
+        return "t_number must be at least 10."
+    if num_points < 1:
+        return "num_points must be at least 1."
+    if t_full_end <= t_train_end:
+        return "t_full_end must be greater than t_train_end."
+    return None
+
+
+def build_trajectory_choices(df_metrics: pd.DataFrame, top_n: int = 5):
+    """Build (choices, default_value) for the trajectory CheckboxGroup, sorted by anomaly_score desc."""
+    if df_metrics.empty:
+        return gr.update(choices=[], value=[])
+    df_sorted = df_metrics.sort_values(by="anomaly_score", ascending=False, na_position="last")
+    choices = []
+    for _, row in df_sorted.iterrows():
+        idx = int(row["idx"])
+        label = f"{idx}: H={row.get('hurst', float('nan')):.3g} | score={row.get('anomaly_score', float('nan')):.3g}"
+        choices.append((label, idx))
+    default_value = [c[1] for c in choices[:top_n]]
+    return gr.update(choices=choices, value=default_value)
 
 
 with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
@@ -359,7 +428,7 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
                 value=DEFAULTS["solver_type"]
             )
             show_connections = gr.Checkbox(
-                label="Show connections (DOP853 ↔ NN)",
+                label="Show shadowing analysis (trajectory vs. perturbed trajectory)",
                 value=False
             )
             connection_stride = gr.Slider(
@@ -387,8 +456,6 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
                 apply_text_btn = gr.Button("Apply text → controls")
                 read_text_btn = gr.Button("Read controls → text")
             
-            status_text = gr.Textbox(label="Status", lines=2)
-            
         with gr.Column(scale=2):
             gr.Markdown("### Outputs")
             
@@ -400,7 +467,8 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
                 with gr.TabItem("Shadowing"):
                     shadowing_fig = gr.Plot(label="Shadowing Analysis")
                 with gr.TabItem("Metrics"):
-                    metrics_df = gr.HTML(label="Metrics Table")
+                    metrics_table = gr.Dataframe(label="Metrics Table", interactive=False)
+                    metrics_csv_file = gr.File(label="Download metrics CSV (rounded)")
                 with gr.TabItem("Documentation"):
                     documentation = gr.Markdown(documentation_markdown())
                 with gr.TabItem("System Equation"):
@@ -422,8 +490,8 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
             selected_indices
         ],
         outputs=[
-            phase_fig, time_fig, shadowing_fig, metrics_df,
-            diagnostics_text, params_text, latex_eq, status_text, selected_indices
+            phase_fig, time_fig, shadowing_fig, metrics_table, metrics_csv_file,
+            diagnostics_text, params_text, latex_eq, selected_indices
         ]
     )
     
@@ -454,7 +522,7 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
     
     num_points.change(
         fn=update_selected_indices,
-        inputs=[num_points, gr.Number(value=0, visible=False)],
+        inputs=[num_points],
         outputs=selected_indices
     )
     
