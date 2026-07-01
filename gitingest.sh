@@ -6,4 +6,4 @@ gitingest . \
   --include-pattern "requirements.txt" \
   --exclude-pattern "LICENSE" \
   --exclude-pattern "*/__pycache__/*" \
-  --output out_gitingest/differ_hug_01.txt
+  --output out_gitingest/differ_hug_04_works.txt

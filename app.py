@@ -55,6 +55,41 @@ DEFAULTS = {
 DEFAULT_PARAMS_TEXT = parameters_to_text(DEFAULTS)
 
 
+def guarded_run_simulation(
+    is_batch_update,
+    t_number: int,
+    t_train_end: float,
+    t_full_end: float,
+    alpha: float,
+    K: float,
+    b: float,
+    gamma1: float,
+    gamma2: float,
+    initial_radius: float,
+    num_points: int,
+    circle_start: int,
+    circle_end: int,
+    center_x: float,
+    center_y: float,
+    solver_type: str,
+    show_connections: bool,
+    connection_stride: int,
+    selected_indices: list,
+) -> Tuple[Any, Any, Any, Any, Any, str, str, str, Any]:
+    """
+    Guarded version of run_simulation that skips computation when is_batch_update is True.
+    """
+    if is_batch_update:
+        return tuple(gr.update() for _ in range(9))
+    return run_simulation(
+        t_number, t_train_end, t_full_end,
+        alpha, K, b, gamma1, gamma2,
+        initial_radius, num_points, circle_start, circle_end,
+        center_x, center_y, solver_type, show_connections, connection_stride,
+        selected_indices
+    )
+
+
 def run_simulation(
     t_number: int,
     t_train_end: float,
@@ -150,12 +185,13 @@ def run_simulation(
             t_train_end, t_full_end, t_number
         )
         
-        shadowing_fig = None
-        if show_connections:
-            shadowing_fig = make_shadowing_figure(
-                solutions, selected_indices, solver_type,
-                t_train_end, t_full_end, t_number, rhs_func
-            )
+        shadowing_fig = make_shadowing_figure(
+            solutions, selected_indices, solver_type,
+            t_train_end, t_full_end, t_number, rhs_func
+        )
+        
+        if rhs_func is None:
+            diagnostics.append("WARNING: rhs_func is None, shadowing figure will use zero vector field as fallback (reduced accuracy)")
         
         diagnostics.append("Step 9: Creating metrics table...")
         
@@ -385,6 +421,8 @@ def build_trajectory_choices(df_metrics: pd.DataFrame, top_n: int = 5):
 with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
     gr.Markdown("# Differ Hug: ODE Research Platform")
     gr.Markdown("Interactive Gene Regulatory ODE System")
+
+    is_batch_update = gr.State(value=False)
     
     with gr.Row():
         with gr.Column(scale=1):
@@ -428,8 +466,9 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
                 value=DEFAULTS["solver_type"]
             )
             show_connections = gr.Checkbox(
-                label="Show shadowing analysis (trajectory vs. perturbed trajectory)",
-                value=False
+                label="Show DOP853 ↔ NN connection lines on phase portrait",
+                value=False,
+                info="Controls whether connection lines between DOP853 and NN trajectories are shown on the phase portrait. This does not affect the Shadowing tab."
             )
             connection_stride = gr.Slider(
                 label="Connection stride", minimum=1, maximum=20, step=1,
@@ -443,7 +482,7 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
                 interactive=True
             )
             
-            run_button = gr.Button("Run Simulation", variant="primary")
+            run_button = gr.Button("Recompute now", variant="secondary")
             
             gr.Markdown("### Plain Text Parameters")
             params_text = gr.Textbox(
@@ -482,8 +521,9 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
     gr.Markdown("- Top 5 anomalous trajectories are selected by default")
     
     run_button.click(
-        fn=run_simulation,
+        fn=guarded_run_simulation,
         inputs=[
+            is_batch_update,
             t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
             initial_radius, num_points, circle_start, circle_end,
             center_x, center_y, solver_type, show_connections, connection_stride,
@@ -495,7 +535,29 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
         ]
     )
     
+    sim_inputs = [
+        t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+        initial_radius, num_points, circle_start, circle_end,
+        center_x, center_y, solver_type, show_connections, connection_stride,
+        selected_indices
+    ]
+    sim_outputs = [
+        phase_fig, time_fig, shadowing_fig, metrics_table, metrics_csv_file,
+        diagnostics_text, params_text, latex_eq, selected_indices
+    ]
+    
+    for comp in sim_inputs:
+        comp.change(
+            fn=guarded_run_simulation,
+            inputs=[is_batch_update] + sim_inputs,
+            outputs=sim_outputs
+        )
+    
     apply_text_btn.click(
+        fn=lambda: True,
+        inputs=[],
+        outputs=[is_batch_update]
+    ).then(
         fn=apply_text_to_controls,
         inputs=[
             params_text, t_number, t_train_end, t_full_end, alpha, K, b,
@@ -508,6 +570,14 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
             circle_start, circle_end, center_x, center_y, solver_type,
             params_text, selected_indices
         ]
+    ).then(
+        fn=lambda: False,
+        inputs=[],
+        outputs=[is_batch_update]
+    ).then(
+        fn=run_simulation,
+        inputs=sim_inputs,
+        outputs=sim_outputs
     )
     
     read_text_btn.click(
@@ -521,9 +591,123 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
     )
     
     num_points.change(
-        fn=update_selected_indices,
-        inputs=[num_points],
-        outputs=selected_indices
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    t_train_end.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    t_full_end.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    alpha.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    K.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    b.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    gamma1.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    gamma2.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    initial_radius.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    circle_start.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    circle_end.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    center_x.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    center_y.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    solver_type.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    show_connections.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    connection_stride.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
+    )
+    selected_indices.change(
+        fn=guarded_run_simulation,
+        inputs=[is_batch_update, t_number, t_train_end, t_full_end, alpha, K, b, gamma1, gamma2,
+                initial_radius, num_points, circle_start, circle_end, center_x, center_y, solver_type,
+                show_connections, connection_stride, selected_indices],
+        outputs=sim_outputs
     )
     
     demo.load(
@@ -549,4 +733,5 @@ with gr.Blocks(title="Differ Hug: ODE Research Platform") as demo:
     )
 
 if __name__ == "__main__":
+    demo.queue(default_concurrency_limit=1, max_size=20)
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False, show_error=True)
