@@ -1,8 +1,5 @@
-gradio==4.44.1
-huggingface_hub==0.23.0
-fastapi==0.111.0
-starlette==0.37.2
-jinja2==3.1.4
+gradio>=4.44.1
 numpy>=1.24.0
 scipy>=1.10.0
 matplotlib>=3.7.0
+pandas>=1.5.0
